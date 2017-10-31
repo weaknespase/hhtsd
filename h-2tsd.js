@@ -23,8 +23,10 @@
 
 var https = require("https");
 var http = require("http");
-var libhook = require("./lib-hook-async");
 var url = require("url");
+var stream = require("stream");
+var libhook = require("./lib-hook-async");
+var errors = require("./http-errors");
 
 var KiB = 1024;
 var MiB = 1048576;
@@ -66,7 +68,7 @@ class ServerConfig {
         this.ports = [80];
         this.securePorts = [443];
         /** @type {Map<string, HostedSiteConfig>} */
-        this.sites = new Map();
+        this.sites = {};
 
         /** Cache size limit for requests caching. */
         this.cacheSize = 4 * MiB;
@@ -74,6 +76,8 @@ class ServerConfig {
         this.uploadMaxUnitSize = 1 * MiB;
         /** Maximum amount of data allowed to be in-flight for automatic upload processing. */
         this.uploadMaxStorage = 16 * MiB;
+
+        this.basedir = "";
     };
     validate() {
         if (this.addrs.length == 0)
@@ -88,13 +92,20 @@ class ServerInstance {
      * @param {ServerConfig} config 
      */
     constructor(config) {
+        this._pendingUploads = 0;
         if (config instanceof ServerConfig) {
             let err = config.validate();
             if (err) {
                 throw err;
             } else {
                 this._config = config;
-                /* TODO Reorganize sites inside configuration for easier access to templates */
+                this._iface = libhook.create(this._config.basedir, function(err) {
+                    if (err) {
+                        throw err;
+                    }
+                    console.log("Initialized new server instance. Configuration:");
+                    console.log(require("util").inspect(this._config, false, 5));
+                });
             }
         } else {
             throw new ValidationError("Config must not be null.");
@@ -133,16 +144,199 @@ class ServerInstance {
             return this._config.sites["*"];
         }
     };
+    /**
+     * Runs hooks for valid requests and finishes request handling.
+     * @param {*} request
+     * @param {*} response 
+     * @param {HostedSiteConfig} site
+     * @param {Buffer} data
+     * @param {Map<string, string>} params 
+     */
+    __runExternalRequestHandler(request, response, site, data, params) {
+        var uri = url.parse(request.url, true);
+        var target = uri.path.substr(1);
+        var params2 = uri.query;
+        if (params) {
+            for (var i in params2)
+                if (Object.hasOwnProperty.call(params2, i))
+                    params[i] = params2[i];    
+        } else {
+            params = params2;
+            if (!params) params = {};
+        }
+
+        var catmask = 2 >> (site.category.toUpperCase().charCodeAt[0] - 65);
+
+        //TODO Check cache for availability of cached response
+
+        if (this._iface.checkTarget(catmask, site.hosts[0] + "$" + target)) {
+            //Run uri hook
+            //Hook args: params, headers, data (site already here)
+            this._iface.callHook(catmask, site.hosts[0] + "$" + target, this.__handleHookResponse.bind(this, response, site.hosts[0] + "$" + target), params, request.headers, data);
+        } else if (this._iface.checkTarget(catmask, site.hosts[0] + "$")) {
+            //Run generic hook
+            //Hook args: uri, params, header, data
+            this._iface.callHook(catmask, site.hosts[0] + "$", this.__handleHookResponse.bind(this, response, site.hosts[0] + ">" + target), target, params, request.headers, data);
+        } else {
+            request.end();
+            errors.sendSimpleResponse(response, 404);
+        }
+    };
+    __handleHookResponse(response, target, responseProto) {
+        if (responseProto) {
+            if (typeof responseProto.status == "number") {
+                if (responseProto.status >= 100 && responseProto.status < 600) {
+                    if (responseProto.headers){
+                        for (var i in responseProto.headers) {
+                            if (Object.hasOwnProperty.call(responseProto.headers, i)) {
+                                try {
+                                    response.setHeader(i, responseProto.headers[i]);
+                                } catch (e) {
+                                    console.log("Hook " + target + " header " + i + " contains invalid value.");
+                                    console.log("\t" + responseProto.headers[i]);
+                                }
+                            }
+                        }
+                    }
+                    if (typeof responseProto.dataType == "string") {
+                        try {
+                            response.setHeader("Content-Type", responseProto.dataType);
+                        } catch (e) {
+                            console.log("Hook " + target + " field 'dataType' contains invalid value.");
+                            console.log("\t" + responseProto.dataType);
+                            response.setHeader("Content-Type", "application/octet-stream");
+                        }
+                    }
+                    if (typeof responseProto.cacheTag == "string") {
+                        //Resource could be cached
+                        
+                    }
+
+                    let cacheable = true;
+                    if (typeof responseProto.data == "string") {
+                        
+
+                    } else if (responseProto.data instanceof stream.Readable) {
+                        cacheable = false;
+                        //Chunked encoding
+                    } else if (typeof responseProto.data == "object" && responseProto.data.length) {
+
+                    }
+                                
+                    
+
+
+                } else {
+                    //Illegal response status code
+                    console.error("Hook " + target + " responded with illegal HTTP status code (" + responseProto.status + ")");
+                }
+            } else if (typeof responseProto.manual == "string") {
+                //Manual request processing
+                console.error("Hook " + target + " requested manual mode, which is not implemented");
+                errors.sendSimpleResponse(response, 500);
+            }
+        } else {
+            console.error("Hook " + target + " didn't return valid response prototype");
+            errors.sendSimpleResponse(response, 500);
+        }
+
+        var example_hook_response = {
+            status: 200,
+            dataType: "text",
+            data: Buffer.alloc(100),
+            headers: {
+                "Set-Cookie": "lalalal"
+            },
+        
+            cacheTag: "string",
+            cacheAge: 1000,
+        
+            manual: "target_hook"
+        }
+
+    };
+    /**
+     * Handles requests with non-zero request body.
+     * @param {*} request
+     * @param {*} response
+     * @param {HostedSiteConfig} site
+     */
+    __requestDataHandler(request, response, site) {
+        var size = -1;
+        var self = this;
+        if (request.headers["content-length"])
+            size = parseInt(request.headers["content-length"]);
+        
+        //Check "Content-Length" field for preliminary reject
+        if (size > 0 && size > this._config.uploadMaxUnitSize) {
+            request.destroy();
+            errors.sendSimpleResponse(response, 406);
+        } else {
+            let dlen = 0;
+            if (request.headers["content-type"] == "application/x-www-form-urlencoded") {
+                request.setEncoding("utf8");
+                let data = "";
+                request.on("data", function(chunk) {
+                    //Checking for total size limitation
+                    if (self._pendingUploads + chunk.length > self._config.uploadMaxStorage) {
+                        console.error("Client " + request.socket.remoteAddress + " at " + request.socket.remotePort + " reached maximum request size limit");
+                        request.destroy(new Error("Maximum request size limit reached."));
+                    } else {
+                        data += chunk;
+                        self._pendingUploads += chunk.length;
+                        dlen += chunk.length;
+                    }
+                });
+                request.on("end", function() {
+                    var params = url.parse("?" + data);
+                    self._pendingUploads -= dlen;
+                    self.__runExternalRequestHandler(request, response, site, null, params);
+                });
+                request.on("error", function() {
+                    errors.sendSimpleResponse(response, 406);
+                    self._pendingUploads -= dlen;
+                });
+                request.on("aborted", function() {
+                    errors.sendSimpleResponse(response, 500);
+                    self._pendingUploads -= dlen;
+                });
+            } else {
+                let data = [];
+                request.on("data", function(chunk) {
+                    if (self._pendingUploads + chunk.length > self._config.uploadMaxStorage) {
+                        console.error("Client " + request.socket.remoteAddress + " at " + request.socket.remotePort + " reached maximum request size limit");
+                        request.destroy(new Error("Maximum request size limit reached."));
+                    } else {
+                        data.push(chunk);
+                        self._pendingUploads += chunk.length;
+                        dlen += chunk.length;
+                    }
+                });
+                request.on("end", function() {
+                    data = Buffer.concat(data);
+                    self._pendingUploads -= dlen;
+                    self.__runExternalRequestHandler(request, response, site, data);
+                });
+                request.on("error", function() {
+                    errors.sendSimpleResponse(response, 406);
+                    self._pendingUploads -= dlen;
+                });
+                request.on("aborted", function() {
+                    errors.sendSimpleResponse(response, 500);
+                    self._pendingUploads -= dlen;
+                });
+            }
+        }
+    };
     __requestHandler(request, response) {
         /*
         Flow:
-        1. Parse URI for PATH and QUERY
-        2. Grab DOMAIN from host field
-        3. Search for registered DOMAIN in the config.sites
-            (* matches any unknown domain, ! matches only requests without domains)
+        *1. Parse URI for PATH and QUERY
+        *2. Grab DOMAIN from host field
+        *3. Search for registered DOMAIN in the config.sites
         4. Get category association with domain
-        5. Fetch POST data for request if any
-        6. Parse QUERY into params object
+        *5. Fetch POST data for request if any
+        *6. Parse QUERY into params object
         7. Check hooks for URI
         8. Call hook for URI or generic hook (again if exists)
         9. Grab execution results
@@ -150,84 +344,44 @@ class ServerInstance {
 
         //Including cache subsystem
         //If request came for exact same uri, and is GET/HEAD, we allowed to use cache
+        //On the other hand we're waiting for request to be processed fully, resolved up to the target
 
         //Parse URI
-        var uri = url.parse(request.url, true);
-        var target = uri.path.substr(1);
-        var params = uri.query;
         var host = request.headers["host"];
-        if (!params) params = {};
 
         //Find site configuration
         var site = this.__matchSiteForHost(host);
         if (site) {
-            var bskip = false;
             switch (request.method) {
-                case "HEAD": {
-                    bskip = true;
-                }
+                case "HEAD":
                 case "GET": {
                     //We got everything already
                     request.resume();
-    
+                    this.__runExternalRequestHandler(request, response, site, null);
                     break;
                 }
                 case "POST": {
-    
+                    this.__requestDataHandler(request, response, site);
+                    break;
+                }
+                default: {
+                    //Unsupported method
+                    request.resume();
+                    errors.sendSimpleResponse(response, 405);
                     break;
                 }
             }
         } else {
-            //Site configuration isn't found
+            //Site configuration wasn't found, break the connection
+            request.resume();
+            response.socket.destroy();
         }
 
 
         
         
-        var uri = url.parse(request.url, true);
-        var hookTarget = uri.pathname.substr(1);
-        var params = uri.query;
-        if (!params) params = {};
-        var buffer = null;
         if (request.method == "POST") {
-            //Read request body
-            if (request.headers["content-type"] == "application/x-www-form-urlencoded") {
-                request.setEncoding("utf8");
-                buffer = "";
-                request.on("data", function(chunk) {
-                    buffer += chunk;
-                });
-                request.on("end", function() {
-                    var params2 = url.parse("?" + buffer);
-                    for (var i in params2.query) {
-                        if (Object.hasOwnProperty.call(params2.query, i)) {
-                            params[i] = decodeURIComponent(params2.query[i]);
-                        }
-                    }
-                    delegateTo(hookTarget, params, { method: "POST" }, response);
-                });
-                request.on("aborted", function() {
-                    response.end();
-                });
-            } else {
-                request.on("data", function(chunk) {
-                    if (!buffer) {
-                        buffer = chunk;
-                    } else {
-                        buffer = Buffer.concat([buffer, chunk]);
-                    }
-                    if (buffer.length > MAX_POSTDATA_LENGTH) {
-                        request.destroy();
-                    }
-                });
-                request.on("end", function() {
-                    delegateTo(hookTarget, params, { method: "POST", postData: buffer }, response);
-                });
-                request.on("aborted", function(err) {
-                    //Drop connections
-                    response.end();
-                });
-            }
+            
         } else if (request.method == "GET") {
             request.resume();
             delegateTo(hookTarget, params, { method: "GET" }, response);
@@ -256,6 +410,10 @@ class ResponseCache {
 function hAW_$something() {
     
 }
+
+module.exports.Server = ServerInstance;
+module.exports.ServerConfig = ServerConfig;
+module.exports.ServerSiteConfig = HostedSiteConfig;
 
 /**
  *

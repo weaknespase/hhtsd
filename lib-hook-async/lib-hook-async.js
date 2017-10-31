@@ -499,6 +499,7 @@ class HookLoader {
      * @param {number} [catMask] optional category mask to check for hook functions
      * @param {string} name hook name
      * @param {boolean} [strict] use strict category matching
+     * @returns {boolean}
      */
     checkTarget(catMask, name, strict) {
         if (typeof catMask !== "number") {
