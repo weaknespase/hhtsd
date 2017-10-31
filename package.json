@@ -1,0 +1,16 @@
+{
+  "name": "h-2tsd",
+  "version": "0.1.2",
+  "description": "Simple HTTP/HTTPS server with fastCGI interface and caching support.",
+  "main": "h-2tsd.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "http",
+    "https",
+    "web-server"
+  ],
+  "author": "weaknespase",
+  "license": "GPL-3.0"
+}
