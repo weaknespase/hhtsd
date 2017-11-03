@@ -385,13 +385,15 @@ class ResponseCacheItem {
         this.data = data;
         this.size = 0;
         this.id = "";
+        this.expire = 0;
         this.link = null;
     }
 }
 
 class ResponseCache {
-    constructor() {
+    constructor(limit) {
         this.size = 0;
+        this.sizeLimit = limit;
         /** @type {Map<string, ResponseCacheItem>} */
         this._map = {};
         this._lru = new collections.LinkedList();
@@ -399,26 +401,49 @@ class ResponseCache {
     retv(id) {
         var x = this._map[id];
         if (x instanceof ResponseCacheItem) {
-            this._lru.remove(x.link);
-            this._lru.insert(x.link);
-            return x.data;
+            if (x.expire < Date.now()) {
+                //Purge item from cache
+                this.size -= x.size;
+                delete this._map[id];
+                this._lru.remove(x.link);
+                return undefined;
+            } else {
+                this._lru.remove(x.link);
+                this._lru.insert(x.link);
+                return x.data;
+            }    
         }
         return undefined;
     };
-    stor(id, data, size) {
+    stor(id, data, size, expires) {
         var x = this._map[id];
         if (x instanceof ResponseCacheItem) {
             x.data = data;
             this.size += size - x.size;
             x.size = size;
+            x.expire = expires;
         } else {
             x = new ResponseCacheItem(data);
             x.size = size;
             x.id = id;
+            x.expire = expires;
             this.size += size;
             x.link = this._lru.insert(id);
             this._map[id] = x;
         }
+        if (this.sizeLimit > 0) {
+            while (this.size > this.sizeLimit) {
+                var i = this._lru.tail();
+                if (i) {
+                    x = this._map[i.value];
+                    if (x) {
+                        this.size -= x.size;
+                        delete this._map[i.value];
+                    }
+                    this._lru.remove(i);
+                } else break;    
+            }
+        }    
     };
 }
 

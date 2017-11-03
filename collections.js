@@ -96,10 +96,15 @@ class LinkedList {
     };
     /**
      * Returns first item of linked list
+     * @return {LinkedListItem}
      */
     head() {
         return this._head;
     };
+    /**
+     * Returns last item of list.
+     * @return {LinkedListItem}
+     */
     tail() {
         return this._tail || this._head;
     };
