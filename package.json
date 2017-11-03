@@ -1,6 +1,6 @@
 {
   "name": "h-2tsd",
-  "version": "0.2.4",
+  "version": "0.3.5",
   "description": "Simple HTTP/HTTPS server with fastCGI interface and caching support.",
   "main": "h-2tsd.js",
   "scripts": {

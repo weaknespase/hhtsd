@@ -27,6 +27,7 @@ var url = require("url");
 var stream = require("stream");
 var libhook = require("./lib-hook-async");
 var errors = require("./http-errors");
+var collections = require("./collections");
 
 var KiB = 1024;
 var MiB = 1048576;
@@ -376,34 +377,48 @@ class ServerInstance {
             request.resume();
             response.socket.destroy();
         }
-
-
-        
-        
-        if (request.method == "POST") {
-            
-        } else if (request.method == "GET") {
-            request.resume();
-            delegateTo(hookTarget, params, { method: "GET" }, response);
-        } else if (request.method == "HEAD") {
-            request.resume();
-            delegateTo(hookTarget, params, { method: "HEAD" }, response);
-        } else if (request.method == "BREW" || request.method == "PROPFIND" || request.method == "WHEN") {
-            request.resume();
-            writeErrorResponse(418, response);
-        } else {
-            request.resume();
-            writeErrorResponse(501, response);
-        }
     };
+}
+
+class ResponseCacheItem {
+    constructor(data) {
+        this.data = data;
+        this.size = 0;
+        this.id = "";
+        this.link = null;
+    }
 }
 
 class ResponseCache {
     constructor() {
-        
+        this.size = 0;
+        /** @type {Map<string, ResponseCacheItem>} */
+        this._map = {};
+        this._lru = new collections.LinkedList();
     };
-    fetch(id) {
-        
+    retv(id) {
+        var x = this._map[id];
+        if (x instanceof ResponseCacheItem) {
+            this._lru.remove(x.link);
+            this._lru.insert(x.link);
+            return x.data;
+        }
+        return undefined;
+    };
+    stor(id, data, size) {
+        var x = this._map[id];
+        if (x instanceof ResponseCacheItem) {
+            x.data = data;
+            this.size += size - x.size;
+            x.size = size;
+        } else {
+            x = new ResponseCacheItem(data);
+            x.size = size;
+            x.id = id;
+            this.size += size;
+            x.link = this._lru.insert(id);
+            this._map[id] = x;
+        }
     };
 }
 
