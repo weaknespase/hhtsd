@@ -107,9 +107,7 @@ function strictMatchFunc(cat, catMask) {
     return (cat ^ catMask) == 0;
 }
 
-//TODO Rewrite using ES2015 classes - tsserver has less issues with them and code a bit cleaner.
-
-var ContextSymbol = new Symbol("Context");
+var ContextSymbol = Symbol("Context");
 
 /** @returns {{_compareFunc: (category: number, mask: number) => boolean, _nextHook: number, _lastResult: any, callback: (result: any)=>void}} */
 function createContext(initialValue, environment) {
@@ -295,7 +293,7 @@ class HookLoader {
                 if (typeof readyCallback == "function")
                     readyCallback(err);    
             } else {
-                self.__mergeHooksIntoTable(this._hooksTable, list.filter(function(item) {
+                self.__mergeHooksIntoTable(self._hooksTable, list.filter(function(item) {
                     return HOOK_FILE_NAME_REGEX.test(item);
                 }).map(function(item) {
                     return path.join(baseDir, item);

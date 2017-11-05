@@ -1,8 +1,8 @@
 {
-  "name": "h-2tsd",
-  "version": "0.4.8",
+  "name": "hhtsd",
+  "version": "0.4.9",
   "description": "Simple HTTP/HTTPS server with fastCGI interface and caching support.",
-  "main": "h-2tsd.js",
+  "main": "server.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
   },

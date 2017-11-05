@@ -4,7 +4,7 @@
 
 module.exports.sendSimpleResponse = function sendSimpleResponse(response, code) {
     response.writeHead(code, getStatusMessage(code), {
-        "Content-Type": "text/plain",
+        "Content-Type": "text/plain; charset=utf-8",
     });
     response.end(response.statusCode + " " + response.statusMessage + "\n\n" + (new Date()).toString());
 }

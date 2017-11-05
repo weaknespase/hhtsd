@@ -28,7 +28,7 @@ var stream = require("stream");
 var libhook = require("./lib-hook-async");
 var errors = require("./http-errors");
 var collections = require("./collections");
-var ResponsePrototype = require("./h-2tsd-response-proto").ResponsePrototype;
+var ResponsePrototype = require("./response-proto").ResponsePrototype;
 
 var KiB = 1024;
 var MiB = 1048576;
@@ -66,8 +66,11 @@ class HostedSiteConfig {
 
 class ServerConfig {
     constructor() {
-        this.addrs = ["0.0.0.0"];
+        /** @type {string[]} */
+        this.addrs = [];
+        /** @type {number[]} */
         this.ports = [80];
+        /** @type {number[]} */
         this.securePorts = [443];
         /** @type {Map<string, HostedSiteConfig>} */
         this.sites = {};
@@ -94,6 +97,7 @@ class ServerInstance {
      * @param {ServerConfig} config 
      */
     constructor(config) {
+        var self = this;
         this._pendingUploads = 0;
         this._cache = new ResponseCache(0);
         if (config instanceof ServerConfig) {
@@ -108,7 +112,7 @@ class ServerInstance {
                         throw err;
                     }
                     console.log("Initialized new server instance. Configuration:");
-                    console.log(require("util").inspect(this._config, false, 5));
+                    console.log(require("util").inspect(self._config, false, 5));
                 });
             }
         } else {
@@ -120,14 +124,16 @@ class ServerInstance {
         this._secureServer = [];
         //Create plain-text server listening endpoints
         for (var i = 0; i < this._config.ports.length; i++){
-            this._plainServer.push(http.createServer(this.__requestHandler.bind(this)));
+            let server = http.createServer(this.__requestHandler.bind(this));
+            server.listen(this._config.ports[i], this._config.addrs[0]);
+            this._plainServer.push(server);
         }
         //Create secure server listening endpoints
-        for (var i = 0; i < this._config.securePorts.length; i++){
+        /*for (var i = 0; i < this._config.securePorts.length; i++){
             this._secureServer.push(http.createServer(function(request, response) {
                 
             }));
-        }
+        }*/
     };
     stop() {
         
@@ -187,7 +193,6 @@ class ServerInstance {
                 //Hook args: uri, params, header, data
                 this._iface.callHook(catmask, site.hosts[0] + "$", this.__handleHookResponse.bind(this, request, response, site, site.hosts[0] + ">" + target), target, params, request.headers, data);
             } else {
-                request.end();
                 errors.sendSimpleResponse(response, 404);
             }
         }    
