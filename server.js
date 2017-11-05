@@ -175,7 +175,7 @@ class ServerInstance {
             if (!params) params = {};
         }
 
-        var catmask = 2 >> (site.category.toUpperCase().charCodeAt[0] - 65);
+        var catmask = 1 << (site.category.toUpperCase().charCodeAt(0) - 65);
 
         //Check cache for cached response object
         var rid = site.hosts[0] + "$" + request.url;

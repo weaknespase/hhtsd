@@ -293,7 +293,7 @@ class HookLoader {
                 if (typeof readyCallback == "function")
                     readyCallback(err);    
             } else {
-                self.__mergeHooksIntoTable(self._hooksTable, list.filter(function(item) {
+                self.__mergeHooksIntoTable(list.filter(function(item) {
                     return HOOK_FILE_NAME_REGEX.test(item);
                 }).map(function(item) {
                     return path.join(baseDir, item);
@@ -308,7 +308,7 @@ class HookLoader {
     };
 
     __mergeHooksIntoTable(modules, callhooks) {
-        var table = this._hooks;
+        var table = this._hooksTable;
         var self = this;
         modules.forEach(function(mod) {
             var sign = path.basename(mod);
@@ -341,6 +341,7 @@ class HookLoader {
     };
 
     __getHooksFromModule(filepath) {
+        const type = ["synchronous", "event listener", "asynchronous"];
         var abs = path.resolve(this._baseDir, filepath);
         delete require.cache[abs];
         try {
@@ -351,7 +352,7 @@ class HookLoader {
             for (var i in mod) {
                 let m = HOOK_FUNC_REGEX_V2.exec(i);
                 if (m && typeof mod[i] === "function") {
-                    if (typeof mod[i] != "number")
+                    if (typeof mod[i].priority != "number")
                         mod[i].priority = prio;
                     mod[i].src = sign;
                     mod[i].type = m[3];
@@ -359,6 +360,7 @@ class HookLoader {
                     m[1] = m[1].toUpperCase();
                     mod[i].execPolicy = m[1] == "S" ? 0 : (m[1] == "E" ? 1 : 2);
                     hooks.push(mod[i]);
+                    console.log("Found " + type[mod[i].execPolicy] + " handler for " + mod[i].type + " in " + path.basename(filepath));
                 }
             }
             return hooks;
@@ -394,7 +396,7 @@ class HookLoader {
     };
 
     __hookWatcherCallback(modules) {
-        this.__mergeHooksIntoTable(this._hooksTable, modules.filter(function(mod) {
+        this.__mergeHooksIntoTable(modules.filter(function(mod) {
             return HOOK_FILE_NAME_REGEX.test(mod);
         }), true);
     };
@@ -509,7 +511,6 @@ class HookLoader {
             if (strict) {
                 return this._hooksTable[name].checkStrict(catMask);
             } else {
-                if (catMask == -1 | 0) return true;
                 return this._hooksTable[name].check(catMask);
             }    
         }
