@@ -28,6 +28,7 @@ var stream = require("stream");
 var libhook = require("./lib-hook-async");
 var errors = require("./http-errors");
 var collections = require("./collections");
+var ResponsePrototype = require("./h-2tsd-response-proto").ResponsePrototype;
 
 var KiB = 1024;
 var MiB = 1048576;
@@ -94,12 +95,14 @@ class ServerInstance {
      */
     constructor(config) {
         this._pendingUploads = 0;
+        this._cache = new ResponseCache(0);
         if (config instanceof ServerConfig) {
             let err = config.validate();
             if (err) {
                 throw err;
             } else {
                 this._config = config;
+                this._cache.sizeLimit = this._config.cacheSize;
                 this._iface = libhook.create(this._config.basedir, function(err) {
                     if (err) {
                         throw err;
@@ -168,25 +171,32 @@ class ServerInstance {
 
         var catmask = 2 >> (site.category.toUpperCase().charCodeAt[0] - 65);
 
-        //TODO Check cache for availability of cached response
-
-        if (this._iface.checkTarget(catmask, site.hosts[0] + "$" + target)) {
-            //Run uri hook
-            //Hook args: params, headers, data (site already here)
-            this._iface.callHook(catmask, site.hosts[0] + "$" + target, this.__handleHookResponse.bind(this, response, site.hosts[0] + "$" + target), params, request.headers, data);
-        } else if (this._iface.checkTarget(catmask, site.hosts[0] + "$")) {
-            //Run generic hook
-            //Hook args: uri, params, header, data
-            this._iface.callHook(catmask, site.hosts[0] + "$", this.__handleHookResponse.bind(this, response, site.hosts[0] + ">" + target), target, params, request.headers, data);
+        //Check cache for cached response object
+        var rid = site.hosts[0] + "$" + request.url;
+        var rproto = this._cache.retv(rid);
+        if (rproto) {
+            //Found something ()
+            this.__handleHookResponse(request, response, rid, rproto);
         } else {
-            request.end();
-            errors.sendSimpleResponse(response, 404);
-        }
+            if (this._iface.checkTarget(catmask, site.hosts[0] + "$" + target)) {
+                //Run uri hook
+                //Hook args: params, headers, data (site already here)
+                this._iface.callHook(catmask, site.hosts[0] + "$" + target, this.__handleHookResponse.bind(this, request, response, site.hosts[0] + "$" + target), params, request.headers, data);
+            } else if (this._iface.checkTarget(catmask, site.hosts[0] + "$")) {
+                //Run generic hook
+                //Hook args: uri, params, header, data
+                this._iface.callHook(catmask, site.hosts[0] + "$", this.__handleHookResponse.bind(this, request, response, site.hosts[0] + ">" + target), target, params, request.headers, data);
+            } else {
+                request.end();
+                errors.sendSimpleResponse(response, 404);
+            }
+        }    
     };
-    __handleHookResponse(response, target, responseProto) {
+    __handleHookResponse(request, response, target, responseProto) {
         if (responseProto) {
             if (typeof responseProto.status == "number") {
                 if (responseProto.status >= 100 && responseProto.status < 600) {
+                    var cacheable = true;
                     if (responseProto.headers){
                         for (var i in responseProto.headers) {
                             if (Object.hasOwnProperty.call(responseProto.headers, i)) {
@@ -210,21 +220,39 @@ class ServerInstance {
                     }
                     if (typeof responseProto.cacheTag == "string") {
                         //Resource could be cached
-                        
-                    }
+                        response.setHeader("ETag", responseProto.cacheTag);
+                    } else cacheable = false;
 
-                    let cacheable = true;
                     if (typeof responseProto.data == "string") {
                         
 
                     } else if (responseProto.data instanceof stream.Readable) {
                         cacheable = false;
+                        //Streams are dynamic and can't be used in static cache
+
                         //Chunked encoding
                     } else if (typeof responseProto.data == "object" && responseProto.data.length) {
 
                     }
                                 
-                    
+                    /*
+                    Response is cacheable if:
+                    1. ETag'ed
+                    2. Don't have data or data is not streamed
+                    */
+
+                            //Now including complex logic of handling conditional requests
+                    var condition;
+                    if (condition = request.headers["if-match"]) {
+                        //Send only matching Etag
+
+                    } else if (condition = request.headers["if-none-match"]) {
+                        //Send only unmatching Etag
+
+                    } else {
+                        //No conditionals, send full response
+
+                    }
 
 
                 } else {
@@ -381,6 +409,9 @@ class ServerInstance {
 }
 
 class ResponseCacheItem {
+    /**
+     * @param {ResponsePrototype} data 
+     */
     constructor(data) {
         this.data = data;
         this.size = 0;
@@ -398,6 +429,12 @@ class ResponseCache {
         this._map = {};
         this._lru = new collections.LinkedList();
     };
+    /**
+     * Retrieves cached ResponsePrototype.
+     * Automatically invalidates expired entries on access.
+     * @param {string} id id of response
+     * @returns {ResponsePrototype}
+     */
     retv(id) {
         var x = this._map[id];
         if (x instanceof ResponseCacheItem) {
@@ -415,6 +452,13 @@ class ResponseCache {
         }
         return undefined;
     };
+    /**
+     * Stores (or updates) response in the cache.
+     * @param {string} id unique response id
+     * @param {ResponsePrototype} data response data
+     * @param {number} size size in bytes of response payload
+     * @param {number} expires timestamp in the future when response becomes invalid
+     */
     stor(id, data, size, expires) {
         var x = this._map[id];
         if (x instanceof ResponseCacheItem) {
