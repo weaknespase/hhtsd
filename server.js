@@ -163,6 +163,8 @@ class ServerInstance {
      * @param {Map<string, string>} params 
      */
     __runExternalRequestHandler(request, response, site, data, params) {
+        request.__sts = process.hrtime(request.__sts);
+        request.__gts = process.hrtime();
         var uri = url.parse(request.url, true);
         var target = uri.path.substr(1);
         var params2 = uri.query;
@@ -245,28 +247,32 @@ class ServerInstance {
                             //Convert string to Buffer using utf8 encoding
                             responseProto.data = Buffer.from(responseProto.data, "utf8");
                         }
+                        request.__gts = process.hrtime(request.__gts);
+                        response.setHeader("X-GMetrics", Math.round(request.__sts[0] * 1e9 + request.__sts[1])/1000 + "us, " + Math.round(request.__gts[0] * 1e9 + request.__gts[1])/1000 + "us");
                         if (responseProto.data instanceof Buffer || responseProto.data instanceof Uint8Array) {
                             response.setHeader("Content-Length", responseProto.data.byteLength);
                             response.end(responseProto.data);
-                            return;
                         } else if (responseProto.data instanceof stream.Readable) {
                             cacheable = false;
                             responseProto.data.pipe(response);
-                            return;
                         } else {
                             console.log("Hook " + target + " field 'data' contains response data in invalid format.");
                             responseProto.removeHeader("Content-Type");
                             responseProto.removeHeader("ETag");
                             responseProto.removeHeader("Cache-Control");
                             cacheable = false;
+                            response.end();
                         }
 
                         if (cacheable) {
-                            this._cache.stor(site.hosts[0], responseProto, responseProto.data.length, Date.now() + responseProto.maxAge * 1000);
+                            this._cache.stor(site.hosts[0] + "$" + request.url, responseProto, responseProto.data.length, Date.now() + responseProto.maxAge * 1000);
                         }
+                    } else {
+                        //Response contains no data
+                        request.__gts = process.hrtime(request.__gts);
+                        response.setHeader("X-GMetrics", Math.round(request.__sts[0] * 1e9 + request.__sts[1])/1000 + "us, " + Math.round(request.__gts[0] * 1e9 + request.__gts[1])/1000 + "us");
+                        response.end();
                     }
-                    //Response contains no data or invalid data has been returned by hook
-                    response.end();
                 } else {
                     //Illegal response status code
                     console.error("Hook " + target + " responded with illegal HTTP status code (" + responseProto.status + ")");
@@ -374,6 +380,7 @@ class ServerInstance {
 
         //Parse URI
         var host = request.headers["host"];
+        request.__sts = process.hrtime();
 
         //Find site configuration
         var site = this.__matchSiteForHost(host);
@@ -514,4 +521,22 @@ module.exports.ServerSiteConfig = HostedSiteConfig;
  *  In manual mode they will be passes response handle for full response control.
  *  Latter useful for special communication modes, like SSE or websocket (?)
  *  
+ */
+
+/**
+ * Performance metrics as of 0.4.11
+ * Core i7 2600K @ 3.4Ghz
+ * 1. GET with query and hook call with one synchronous function:   200-240 us
+ * 2. GET with query and response from static cache:                160-190 us
+ * Thoughput atm: 1500 static requests per second per Ghz, pretty impressive, NodeJS.
+ */
+
+/**
+ * To do:
+ * 1. Handling of conditional requests for ETag and Date using cache.
+ * 2. HTTPS support with HTTP->HTTPS automatic upgrade.
+ * 3. Compression support with "Accept-Encoding" (explicit with request prototype)
+ * 4. Implicit compression of response data in static cache.
+ * 5. Disable cache for POST request.
+ * 6. Test for leaks.
  */
