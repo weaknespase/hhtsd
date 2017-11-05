@@ -176,27 +176,36 @@ class ServerInstance {
         var rproto = this._cache.retv(rid);
         if (rproto) {
             //Found something ()
-            this.__handleHookResponse(request, response, rid, rproto);
+            this.__handleHookResponse(request, response, site, site.hosts[0] + "$" + target, rproto);
         } else {
             if (this._iface.checkTarget(catmask, site.hosts[0] + "$" + target)) {
                 //Run uri hook
                 //Hook args: params, headers, data (site already here)
-                this._iface.callHook(catmask, site.hosts[0] + "$" + target, this.__handleHookResponse.bind(this, request, response, site.hosts[0] + "$" + target), params, request.headers, data);
+                this._iface.callHook(catmask, site.hosts[0] + "$" + target, this.__handleHookResponse.bind(this, request, response, site, site.hosts[0] + "$" + target), params, request.headers, data);
             } else if (this._iface.checkTarget(catmask, site.hosts[0] + "$")) {
                 //Run generic hook
                 //Hook args: uri, params, header, data
-                this._iface.callHook(catmask, site.hosts[0] + "$", this.__handleHookResponse.bind(this, request, response, site.hosts[0] + ">" + target), target, params, request.headers, data);
+                this._iface.callHook(catmask, site.hosts[0] + "$", this.__handleHookResponse.bind(this, request, response, site, site.hosts[0] + ">" + target), target, params, request.headers, data);
             } else {
                 request.end();
                 errors.sendSimpleResponse(response, 404);
             }
         }    
     };
-    __handleHookResponse(request, response, target, responseProto) {
+    /**
+     * @param {*} request 
+     * @param {*} response
+     * @param {HostedSiteConfig} site
+     * @param {string} target target hook name
+     * @param {ResponsePrototype} responseProto 
+     */
+    __handleHookResponse(request, response, site, target, responseProto) {
         if (responseProto) {
             if (typeof responseProto.status == "number") {
                 if (responseProto.status >= 100 && responseProto.status < 600) {
                     var cacheable = true;
+                    response.statusCode = responseProto.status;
+                    response.statusMessage = errors.getStatusMessage(responseProto.status);
                     if (responseProto.headers){
                         for (var i in responseProto.headers) {
                             if (Object.hasOwnProperty.call(responseProto.headers, i)) {
@@ -209,52 +218,50 @@ class ServerInstance {
                             }
                         }
                     }
-                    if (typeof responseProto.dataType == "string") {
-                        try {
-                            response.setHeader("Content-Type", responseProto.dataType);
-                        } catch (e) {
-                            console.log("Hook " + target + " field 'dataType' contains invalid value.");
-                            console.log("\t" + responseProto.dataType);
+                    if (responseProto.data) {
+                        if (typeof responseProto.entityTag == "string") {
+                            response.setHeader("ETag", responseProto.entityTag);
+                            if (typeof responseProto.maxAge == "number") {
+                                response.setHeader("Cache-Control", "max-age=" + responseProto.maxAge + ", must-revalidate");
+                            }
+                        } else cacheable = false;
+                        if (typeof responseProto.dataType == "string") {
+                            try {
+                                response.setHeader("Content-Type", responseProto.dataType);
+                            } catch (e) {
+                                console.log("Hook " + target + " field 'dataType' contains invalid value.");
+                                console.log("\t" + responseProto.dataType);
+                                response.setHeader("Content-Type", "application/octet-stream");
+                            }
+                        } else {
                             response.setHeader("Content-Type", "application/octet-stream");
                         }
+                        if (typeof responseProto.data == "string") {
+                            //Convert string to Buffer using utf8 encoding
+                            responseProto.data = Buffer.from(responseProto.data, "utf8");
+                        }
+                        if (responseProto.data instanceof Buffer || responseProto.data instanceof Uint8Array) {
+                            response.setHeader("Content-Length", responseProto.data.byteLength);
+                            response.end(responseProto.data);
+                            return;
+                        } else if (responseProto.data instanceof stream.Readable) {
+                            cacheable = false;
+                            responseProto.data.pipe(response);
+                            return;
+                        } else {
+                            console.log("Hook " + target + " field 'data' contains response data in invalid format.");
+                            responseProto.removeHeader("Content-Type");
+                            responseProto.removeHeader("ETag");
+                            responseProto.removeHeader("Cache-Control");
+                            cacheable = false;
+                        }
+
+                        if (cacheable) {
+                            this._cache.stor(site.hosts[0], responseProto, responseProto.data.length, Date.now() + responseProto.maxAge * 1000);
+                        }
                     }
-                    if (typeof responseProto.cacheTag == "string") {
-                        //Resource could be cached
-                        response.setHeader("ETag", responseProto.cacheTag);
-                    } else cacheable = false;
-
-                    if (typeof responseProto.data == "string") {
-                        
-
-                    } else if (responseProto.data instanceof stream.Readable) {
-                        cacheable = false;
-                        //Streams are dynamic and can't be used in static cache
-
-                        //Chunked encoding
-                    } else if (typeof responseProto.data == "object" && responseProto.data.length) {
-
-                    }
-                                
-                    /*
-                    Response is cacheable if:
-                    1. ETag'ed
-                    2. Don't have data or data is not streamed
-                    */
-
-                            //Now including complex logic of handling conditional requests
-                    var condition;
-                    if (condition = request.headers["if-match"]) {
-                        //Send only matching Etag
-
-                    } else if (condition = request.headers["if-none-match"]) {
-                        //Send only unmatching Etag
-
-                    } else {
-                        //No conditionals, send full response
-
-                    }
-
-
+                    //Response contains no data or invalid data has been returned by hook
+                    response.end();
                 } else {
                     //Illegal response status code
                     console.error("Hook " + target + " responded with illegal HTTP status code (" + responseProto.status + ")");
@@ -268,21 +275,6 @@ class ServerInstance {
             console.error("Hook " + target + " didn't return valid response prototype");
             errors.sendSimpleResponse(response, 500);
         }
-
-        var example_hook_response = {
-            status: 200,
-            dataType: "text",
-            data: Buffer.alloc(100),
-            headers: {
-                "Set-Cookie": "lalalal"
-            },
-        
-            cacheTag: "string",
-            cacheAge: 1000,
-        
-            manual: "target_hook"
-        }
-
     };
     /**
      * Handles requests with non-zero request body.
