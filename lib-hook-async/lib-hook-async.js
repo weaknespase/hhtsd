@@ -239,7 +239,7 @@ class HookExecutor {
             }
         }
         process.nextTick(function() {
-            cb(context._lastResult);
+            cb(null, context._lastResult);
         });
     };
     /**
@@ -634,7 +634,7 @@ HookLoader.prototype.CATEGORY_Z = 0x2000000;
 /**
  * Creates new hook loader using specific directory to search for hook files.
  * @param {string} path base path to search for hook files
- * @param {{}} [options] loader options
+ * @param {{watch:boolean,recursive:boolean,safe:boolean}} [options] loader options
  * @param {function(Error)} callback callback function, called when hook loader is ready to be used
  * @returns {HookLoader}
  */

@@ -105,6 +105,9 @@ class ServerConfig {
          */
         this.plaintextPolicy = "none";
 
+        /** Enable error handling for hook functions. Disabling it may be faster but code will require extensive testing. */
+        this.safeHooks = true;
+
         /** Cache size limit for requests caching. */
         this.cacheSize = 4 * MiB;
         /** Maximum amount of data allowed to automatically processed withing POST requests. */
@@ -139,7 +142,9 @@ class ServerInstance {
             } else {
                 this._config = config;
                 this._cache.sizeLimit = this._config.cacheSize;
-                this._iface = libhook.create(this._config.basedir, function(err) {
+                var opts = {watch: true, recursive: false};
+                if (this._config.safeHooks) opts.safe = true;
+                this._iface = libhook.create(this._config.basedir, opts, function(err) {
                     if (err) {
                         throw err;
                     }
@@ -250,9 +255,9 @@ class ServerInstance {
         var rproto = this._cache.retv(rid);
         if (rproto) {
             //Found something ()
-            this.__handleHookResponse(request, response, site, site.hosts[0] + "$" + target, rproto);
+            this.__handleHookResponse(request, response, site, site.hosts[0] + "$" + target, null, rproto);
         } else {
-            if (this._iface.checkTarget(catmask, site.hosts[0] + "$" + target)) {
+            if (target.length > 0 && this._iface.checkTarget(catmask, site.hosts[0] + "$" + target)) {
                 //Run uri hook
                 //Hook args: params, headers, data (site already here)
                 this._iface.callHook(catmask, site.hosts[0] + "$" + target, this.__handleHookResponse.bind(this, request, response, site, site.hosts[0] + "$" + target), params, request.headers, data);
