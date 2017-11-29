@@ -29,6 +29,8 @@ var libhook = require("./lib-hook-async");
 var errors = require("./http-errors");
 var collections = require("./collections");
 var ResponsePrototype = require("./response-proto").ResponsePrototype;
+var Socket = require("net").Socket;
+var TLSSocket = require("tls").TLSSocket;
 
 var KiB = 1024;
 var MiB = 1048576;
@@ -64,6 +66,23 @@ class HostedSiteConfig {
     }
 }
 
+class ServerSecureOpts {
+    /**
+     * Creates new configuration for secure server.
+     * @param {string} key private key used for TLS connections (PEM format)
+     * @param {string} chain certificate chain used for TLS connections (PEM format)
+     * @param {string} [passphrase] optional passphrase to decrypt certificates and keys in PEM format
+     */
+    constructor(key, chain, passphrase) {
+        /** @type {string} */
+        this.key = key;
+        /** @type {string} */
+        this.chain = chain;
+        /** @type {string} */
+        this.passphrase = passphrase;
+    }
+}
+
 class ServerConfig {
     constructor() {
         /** @type {string[]} */
@@ -74,6 +93,17 @@ class ServerConfig {
         this.securePorts = [443];
         /** @type {Map<string, HostedSiteConfig>} */
         this.sites = {};
+
+        /** @type {ServerSecureOpts} */
+        this.secure = null;
+        /** 
+         * Describes policy used for plaintext (HTTP) connections. Ignored if HTTPS can't be used.
+         * "none" - do nothing
+         * "upgrade" - send Upgrade header but allow plaintext connections
+         * "reject" - send Upgrade header and reject plaintext connections
+         * @type {"none"|"reject"|"upgrade"}
+         */
+        this.plaintextPolicy = "none";
 
         /** Cache size limit for requests caching. */
         this.cacheSize = 4 * MiB;
@@ -98,6 +128,8 @@ class ServerInstance {
      */
     constructor(config) {
         var self = this;
+        this._started = false;
+        this._tls = false;
         this._pendingUploads = 0;
         this._cache = new ResponseCache(0);
         if (config instanceof ServerConfig) {
@@ -120,6 +152,8 @@ class ServerInstance {
         }
     };
     start() {
+        if (this._started)
+            throw new Error("Server already started, stop first.");    
         this._plainServer = [];
         this._secureServer = [];
         //Create plain-text server listening endpoints
@@ -129,14 +163,46 @@ class ServerInstance {
             this._plainServer.push(server);
         }
         //Create secure server listening endpoints
-        /*for (var i = 0; i < this._config.securePorts.length; i++){
-            this._secureServer.push(http.createServer(function(request, response) {
-                
-            }));
-        }*/
+        var secureOptions = null;
+        if (this._config.secure) {
+            if (this._config.secure.key && this._config.secure.chain) {
+                secureOptions = {
+                    key: this._config.secure.key,
+                    chain: this._config.secure.chain
+                };
+                if (this._config.secure.passphrase) {
+                    secureOptions.passphrase = this._config.secure.passphrase;
+                }
+            } else {
+                console.error("Missing key or certificate chain, can't create HTTPS server.");
+            }
+        } else {
+            console.error("No secure options given, can't create HTTPS server.");
+        }
+        if (secureOptions) {
+            for (var i = 0; i < this._config.securePorts.length; i++) {
+                let server = https.createServer(secureOptions, this.__requestHandler.bind(this));
+                server.listen(this._config.securePorts[i], this._config.addrs[0]);
+                this._secureServer.push(server);
+            }
+            this._tls = true;
+        }    
+        this._started = true;
     };
     stop() {
-        
+        if (this._started) {
+            for (var i = 0; i < this._plainServer.length; i++){
+                this._plainServer[i].close();
+            }
+            for (var i = 0; i < this._secureServer.length; i++){
+                this._secureServer[i].close();
+            }
+            this._started = false;
+            this._tls = false;
+        }
+    };
+    isRunning() {
+        return this._started;
     };
     /**
      * Searches for site configuration using host name.
@@ -204,16 +270,17 @@ class ServerInstance {
      * @param {*} response
      * @param {HostedSiteConfig} site
      * @param {string} target target hook name
+     * @param {Error} error error occurred while executing hook functions
      * @param {ResponsePrototype} responseProto 
      */
-    __handleHookResponse(request, response, site, target, responseProto) {
+    __handleHookResponse(request, response, site, target, error, responseProto) {
         if (responseProto) {
             if (typeof responseProto.status == "number") {
                 if (responseProto.status >= 100 && responseProto.status < 600) {
                     var cacheable = true;
                     response.statusCode = responseProto.status;
                     response.statusMessage = errors.getStatusMessage(responseProto.status);
-                    if (responseProto.headers){
+                    if (responseProto.headers) {
                         for (var i in responseProto.headers) {
                             if (Object.hasOwnProperty.call(responseProto.headers, i)) {
                                 try {
@@ -248,7 +315,7 @@ class ServerInstance {
                             responseProto.data = Buffer.from(responseProto.data, "utf8");
                         }
                         request.__gts = process.hrtime(request.__gts);
-                        response.setHeader("X-GMetrics", Math.round(request.__sts[0] * 1e9 + request.__sts[1])/1000 + "us, " + Math.round(request.__gts[0] * 1e9 + request.__gts[1])/1000 + "us");
+                        response.setHeader("X-GMetrics", Math.round(request.__sts[0] * 1e9 + request.__sts[1]) / 1000 + "us, " + Math.round(request.__gts[0] * 1e9 + request.__gts[1]) / 1000 + "us");
                         if (responseProto.data instanceof Buffer || responseProto.data instanceof Uint8Array) {
                             response.setHeader("Content-Length", responseProto.data.byteLength);
                             response.end(responseProto.data);
@@ -270,7 +337,7 @@ class ServerInstance {
                     } else {
                         //Response contains no data
                         request.__gts = process.hrtime(request.__gts);
-                        response.setHeader("X-GMetrics", Math.round(request.__sts[0] * 1e9 + request.__sts[1])/1000 + "us, " + Math.round(request.__gts[0] * 1e9 + request.__gts[1])/1000 + "us");
+                        response.setHeader("X-GMetrics", Math.round(request.__sts[0] * 1e9 + request.__sts[1]) / 1000 + "us, " + Math.round(request.__gts[0] * 1e9 + request.__gts[1]) / 1000 + "us");
                         response.end();
                     }
                 } else {
@@ -282,6 +349,9 @@ class ServerInstance {
                 console.error("Hook " + target + " requested manual mode, which is not implemented");
                 errors.sendSimpleResponse(response, 500);
             }
+        } else if (error instanceof Error) {
+            console.error("Hook " + target + " encountered an error while running", error);
+            errors.sendSimpleResponse(response, 502);
         } else {
             console.error("Hook " + target + " didn't return valid response prototype");
             errors.sendSimpleResponse(response, 500);
@@ -377,6 +447,15 @@ class ServerInstance {
         //Including cache subsystem
         //If request came for exact same uri, and is GET/HEAD, we allowed to use cache
         //On the other hand we're waiting for request to be processed fully, resolved up to the target
+
+        //Determine request origin (secure (name if issued with server cert as root)|unsecure)
+        if (request.socket instanceof TLSSocket) {
+            console.log("Secure connection");
+        } else if (request.socket instanceof Socket){
+            console.log("Unsecure connection");
+        } else {
+            console.log("Unknown connection");
+        }
 
         //Parse URI
         var host = request.headers["host"];
@@ -502,6 +581,7 @@ function hAW_$something() {
 module.exports.Server = ServerInstance;
 module.exports.ServerConfig = ServerConfig;
 module.exports.ServerSiteConfig = HostedSiteConfig;
+module.exports.ServerSecureOpts = ServerSecureOpts;
 
 /**
  *

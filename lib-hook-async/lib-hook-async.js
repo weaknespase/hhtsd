@@ -136,7 +136,13 @@ function decodeCategory(letter) {
 }
 
 class HookExecutor {
-    constructor() {
+    /**
+     * @param {boolean} safe enables safe invocation of hook functions (graceful error handling)
+     */
+    constructor(safe) {
+        this._safe = safe;
+        /** @type {Error} */
+        this._lastSyncError = null;
         this.hooks = [];
     };
     setHook(hookfunc) {
@@ -173,7 +179,7 @@ class HookExecutor {
     /**
      * Calls hooks using default execution mode.
      * @param {number} catMask categories mask
-     * @param {function(any)} cb callback
+     * @param {function(Error, any)} cb callback
      * @param {Context} context execution context from previous asynchronous call
      * @param {?[]} args
      */
@@ -183,12 +189,32 @@ class HookExecutor {
             let lr = context._lastResult;
             if (context._compareFunc(hook.cat, catMask)) {
                 switch (hook.execPolicy) {
-                    case 0:  //Sync
-                        context._lastResult = hook.apply(context, args);
+                    case 0:  //Sync    
+                        if (this._safe) {
+                            try {
+                                context._lastResult = hook.apply(context, args);
+                            } catch (e) {
+                                process.nextTick(function() {
+                                    cb(e, null);
+                                });
+                                return;
+                            }  
+                        } else
+                            context._lastResult = hook.apply(context, args);
                         break;
                     case 1:  //Event
                         lr = context._lastResult;
-                        hook.apply(context, args);
+                        if (this._safe) {
+                            try {
+                                hook.apply(context, args);
+                            } catch (e) {
+                                process.nextTick(function() {
+                                    cb(e, null);
+                                });
+                                return;
+                            }
+                        } else 
+                            hook.apply(context, args);
                         context._lastResult = lr;
                         break;
                     case 2:  //Async
@@ -197,7 +223,17 @@ class HookExecutor {
                             context._lastResult = value;
                             this.call(catMask, cb, context, ...args);
                         }
-                        hook.apply(context, args);
+                        if (this._safe) {
+                            try {
+                                hook.apply(context, args);
+                            } catch (e) {
+                                process.nextTick(function() {
+                                    cb(e, null);
+                                });
+                                return;
+                            }
+                        } else 
+                            hook.apply(context, args);
                         return;
                 }
             }
@@ -212,17 +248,34 @@ class HookExecutor {
      * @param {?[]} args
      */
     callSync(catMask, context, args) {
+        this._lastSyncError = null;
         for (var i = context._nextHook; i < this.hooks.length; i++){
             let hook = this.hooks[i];
             let lr = context._lastResult;
             if (context._compareFunc(hook.cat, catMask)) {
                 switch (hook.execPolicy) {
                     case 0:
-                        context._lastResult = hook.apply(context, args);    
+                        if (this._safe) {
+                            try {
+                                context._lastResult = hook.apply(context, args);
+                            } catch (e) {
+                                this._lastSyncError = e;
+                                return null;
+                            }
+                        } else  
+                            context._lastResult = hook.apply(context, args);    
                         break;
                     case 1:
                         lr = context._lastResult;
-                        hook.apply(context, args);
+                        if (this._safe) {
+                            try {
+                                hook.apply(context, args);
+                            } catch (e) {
+                                this._lastSyncError = e;
+                                return null;
+                            }
+                        } else 
+                            hook.apply(context, args);
                         context._lastResult = lr;
                         break;
                 }
@@ -244,17 +297,38 @@ class HookExecutor {
                 switch (hook.execPolicy) {
                     case 0:
                         context._lastResult = undefined;    
-                        context._lastResult = hook.apply(context, args);
+                        if (this._safe) {
+                            try {
+                                context._lastResult = hook.apply(context, args);
+                            } catch (e) {
+                                console.warn(e);
+                            }
+                        } else 
+                            context._lastResult = hook.apply(context, args);
                         break;
                     case 1:
                         context._lastResult = undefined;    
-                        hook.apply(context, args);
+                        if (this._safe) {
+                            try {
+                                hook.apply(context, args);
+                            } catch (e) {
+                                console.warn(e);
+                            }
+                        } else 
+                            hook.apply(context, args);
                         break;
                     case 2:
                         context._lastResult = undefined;
                         context.callback = dummy;
                         context._nextHook = i + 1;
-                        hook.apply(context, args);
+                        if (this._safe) {
+                            try {
+                                hook.apply(context, args);
+                            } catch (e) {
+                                console.warn(e);
+                            }
+                        } else 
+                            hook.apply(context, args);
                         break;
                 }
             }
@@ -266,7 +340,7 @@ class HookLoader {
     /**
      * Creates new hook loader using specific directory to search for hook files.
      * @param {string} baseDir base path to search for hook files
-     * @param {*} [options]
+     * @param {{safe:boolean,watch:boolean,recursive:boolean}} [options]
      * @param {function(Error)} readyCallback
      */
     constructor(baseDir, options, readyCallback) {
@@ -283,10 +357,12 @@ class HookLoader {
         if (!options) {
             options = {
                 watch: true,
-                recursive: false
+                recursive: false,
+                safe: false
             };
         }
     
+        this.options = options;
         var self = this;
         fs.readdir(baseDir, function(err, list) {
             if (err) {
@@ -328,7 +404,7 @@ class HookLoader {
             //If some hooks left, then it means their types aren't registered yet
             let hook;
             while (hook = hooks.pop()){
-                table[hook.type] = new HookExecutor();
+                table[hook.type] = new HookExecutor(self.options.safe);
                 table[hook.type].setHook(hook);
             }
             //Fire infrastructure hooks (only one at the moment)
@@ -405,7 +481,7 @@ class HookLoader {
      * Calls named hook asynchronously. Throws if hook is not found.
      * @param {number} [catMask] categories filter
      * @param {string} name name of hook to call
-     * @param {function(any)} callback callback function, which will be called with hook result
+     * @param {function(Error, any)} callback callback function, which will be called with hook result
      * @param {?[]} ...args parameters to pass to hook functions
      */
     callHook(catMask, name, callback, ...args) {
@@ -424,7 +500,7 @@ class HookLoader {
      * only hook functions with exact categories set will be executed.
      * @param {number} [catMask] categories filter
      * @param {string} name name of hook to call
-     * @param {function(any)} callback callback function, which will be called with hook results
+     * @param {function(Error, any)} callback callback function, which will be called with hook results
      * @param {?[]} ...args parameters to pass to hook functions
      */
     callHookStrict(catMask, name, callback, ...args) {
@@ -453,7 +529,7 @@ class HookLoader {
             name = catMask;
             catMask = -1 | 0;
         }
-        this._hooksTable[name].callSync(catMask, createContext(undefined, this.context), args);
+        return this._hooksTable[name].callSync(catMask, createContext(undefined, this.context), args);
     };
 
     /**
