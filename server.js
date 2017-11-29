@@ -70,14 +70,16 @@ class ServerSecureOpts {
     /**
      * Creates new configuration for secure server.
      * @param {string} key private key used for TLS connections (PEM format)
-     * @param {string} chain certificate chain used for TLS connections (PEM format)
+     * @param {string} cert certificate used for TLS connections (PEM format)
+     * @param {stirng} [ca] optional certificate authorities
      * @param {string} [passphrase] optional passphrase to decrypt certificates and keys in PEM format
      */
-    constructor(key, chain, passphrase) {
+    constructor(key, cert, ca, passphrase) {
         /** @type {string} */
         this.key = key;
         /** @type {string} */
-        this.chain = chain;
+        this.cert = cert;
+        this.ca = ca;
         /** @type {string} */
         this.passphrase = passphrase;
     }
@@ -149,7 +151,10 @@ class ServerInstance {
                         throw err;
                     }
                     console.log("Initialized new server instance. Configuration:");
+                    var sopts = self._config.secure;
+                    self._config.secure = "<hidden>";
                     console.log(require("util").inspect(self._config, false, 5));
+                    self._config.secure = sopts;
                 });
             }
         } else {
@@ -170,14 +175,15 @@ class ServerInstance {
         //Create secure server listening endpoints
         var secureOptions = null;
         if (this._config.secure) {
-            if (this._config.secure.key && this._config.secure.chain) {
+            if (this._config.secure.key && this._config.secure.cert) {
                 secureOptions = {
                     key: this._config.secure.key,
-                    chain: this._config.secure.chain
+                    cert: this._config.secure.cert
                 };
-                if (this._config.secure.passphrase) {
+                if (this._config.secure.ca) 
+                    secureOptions.ca = this._config.secure.ca;
+                if (this._config.secure.passphrase) 
                     secureOptions.passphrase = this._config.secure.passphrase;
-                }
             } else {
                 console.error("Missing key or certificate chain, can't create HTTPS server.");
             }
@@ -456,6 +462,7 @@ class ServerInstance {
         //Determine request origin (secure (name if issued with server cert as root)|unsecure)
         if (request.socket instanceof TLSSocket) {
             console.log("Secure connection");
+            console.log(request.socket.getPeerCertificate());
         } else if (request.socket instanceof Socket){
             console.log("Unsecure connection");
         } else {
