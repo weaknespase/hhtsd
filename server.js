@@ -193,6 +193,7 @@ class ServerInstance {
         if (secureOptions) {
             for (var i = 0; i < this._config.securePorts.length; i++) {
                 let server = https.createServer(secureOptions, this.__requestHandler.bind(this));
+                //server.on("upgrade", this.__upgradeHandler.bind(this));
                 server.listen(this._config.securePorts[i], this._config.addrs[0]);
                 this._secureServer.push(server);
             }
@@ -455,23 +456,29 @@ class ServerInstance {
         9. Grab execution results
         */
 
-        //Including cache subsystem
+        //Includes cache subsystem (in later stages)
         //If request came for exact same uri, and is GET/HEAD, we allowed to use cache
         //On the other hand we're waiting for request to be processed fully, resolved up to the target
-
-        //Determine request origin (secure (name if issued with server cert as root)|unsecure)
-        if (request.socket instanceof TLSSocket) {
-            console.log("Secure connection");
-            console.log(request.socket.getPeerCertificate());
-        } else if (request.socket instanceof Socket){
-            console.log("Unsecure connection");
-        } else {
-            console.log("Unknown connection");
-        }
 
         //Parse URI
         var host = request.headers["host"];
         request.__sts = process.hrtime();
+
+        //Upgrade insecure requests (if TLS is available)
+        if (this._tls) {
+            if (!(request.socket instanceof TLSSocket)) {
+                if ((request.headers["upgrade-insecure-requests"] == "1" && this._config.plaintextPolicy == "upgrade") || this._config.plaintextPolicy == "reject") {
+                    //Redirect user
+                    response.statusCode = (request.method == "GET" || request.method == "HEAD") ? 301 : 308;
+                    response.statusMessage = errors.getStatusMessage(response.statusCode);
+                    response.setHeader("Location", "https://" + host + request.url);
+                    response.setHeader("Vary", "Upgrade-Insecure-Requests");
+                    response.setHeader("Content-Type", "text/html");
+                    response.end("Click on the following link if your browser doesn't follow it automatically.<br><a href=\"https://" + host + encodeURI(request.url) + "\">https://" + host + request.url.replace(/</g, "&lt;") + "</a>");
+                    return;
+                }
+            }
+        }
 
         //Find site configuration
         var site = this.__matchSiteForHost(host);
@@ -488,6 +495,10 @@ class ServerInstance {
                     this.__requestDataHandler(request, response, site);
                     break;
                 }
+                case "OPTIONS": {
+                    //FIXME Use this method to upgrade to TLS connection
+                    break;
+                }    
                 default: {
                     //Unsupported method
                     request.resume();
