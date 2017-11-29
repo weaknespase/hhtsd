@@ -119,6 +119,21 @@ class ServerConfig {
 
         this.basedir = "";
     };
+    /**
+     * @param {HostedSiteConfig|HostedSiteConfig[]} config 
+     */
+    addSiteConfig(config) {
+        if (Array.isArray(config)) {
+            for (var i = 0; i < config.length; i++){
+                this.addSiteConfig(config[i]);
+            }
+        } else if (config instanceof HostedSiteConfig) {
+            for (var i = 0; i < config.hosts.length; i++){
+                this.sites[config.hosts[i]] = config;
+            }
+        } else
+            throw new Error("Passed config isn't valid.");
+    };
     validate() {
         if (this.addrs.length == 0)
             return new ValidationError("At least one address to bind to must be specified");
@@ -170,6 +185,9 @@ class ServerInstance {
         for (var i = 0; i < this._config.ports.length; i++){
             let server = http.createServer(this.__requestHandler.bind(this));
             server.listen(this._config.ports[i], this._config.addrs[0]);
+            server.on("listening", function(addr, port) {
+                console.log("Started listeneing for HTTP connections on " + addr + ":" + port);
+            }.bind(null, this._config.addrs[0], this._config.ports[i]));
             this._plainServer.push(server);
         }
         //Create secure server listening endpoints
@@ -193,8 +211,10 @@ class ServerInstance {
         if (secureOptions) {
             for (var i = 0; i < this._config.securePorts.length; i++) {
                 let server = https.createServer(secureOptions, this.__requestHandler.bind(this));
-                //server.on("upgrade", this.__upgradeHandler.bind(this));
                 server.listen(this._config.securePorts[i], this._config.addrs[0]);
+                server.on("listening", function(addr, port) {
+                    console.log("Started listeneing for HTTPS connections on " + addr + ":" + port);
+                }.bind(null, this._config.addrs[0], this._config.ports[i]));
                 this._secureServer.push(server);
             }
             this._tls = true;
