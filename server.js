@@ -307,7 +307,15 @@ class ServerInstance {
      */
     __handleHookResponse(request, response, site, target, error, responseProto) {
         if (responseProto) {
-            if (typeof responseProto.status == "number") {
+            if (responseProto.error instanceof Error) {
+                console.error(
+                    "Error occurred while serving request for " + site.hosts[0] + ":" + request.url + "\n" +
+                    "Client: " + JSON.stringify(request.socket.address()) + "\n" +
+                    "Cause: " + responseProto.error.__proto__.name + ": " + responseProto.error.message + "\n" + 
+                    "ReportedBy: [Hook] " + target
+                );
+                errors.sendSimpleResponse(response, 500);
+            } else if (typeof responseProto.status == "number") {
                 if (responseProto.status >= 100 && responseProto.status < 600) {
                     var cacheable = true;
                     response.statusCode = responseProto.status;
@@ -353,6 +361,8 @@ class ServerInstance {
                             response.end(responseProto.data);
                         } else if (responseProto.data instanceof stream.Readable) {
                             cacheable = false;
+                            if (typeof responseProto.dataLength == "number" && responseProto.dataLength > 0)
+                                response.setHeader("Content-Length", responseProto.dataLength);    
                             responseProto.data.pipe(response);
                         } else {
                             console.log("Hook " + target + " field 'data' contains response data in invalid format.");
@@ -489,7 +499,8 @@ class ServerInstance {
             console.error(
                 "Error occurred while serving request for " + host + ":" + request.url + "\n" +
                 "Client: " + JSON.stringify(request.socket.address()) + "\n" +
-                "Cause: " + err.__proto__.name + ": " + err.message
+                "Cause: " + err.__proto__.name + ": " + err.message + "\n" + 
+                "ReportedBy: [Server]"
             );
         })
 

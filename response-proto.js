@@ -22,6 +22,12 @@ class ResponsePrototype {
         this.dataType = undefined;
 
         /**
+         * Response length in bytes, used only if response data supplied using stream.
+         * @type {number}
+         */
+        this.dataLength = undefined;
+
+        /**
          * Additional headers to set with response. Can be used, for example, to set cookies.
          * @type {Map<string, string>}
          */
@@ -38,6 +44,12 @@ class ResponsePrototype {
          * @type {number}
          */
         this.maxAge = 300;
+
+        /**
+         * Unrecoverable error to log if something wrong happened in process of request handling and it can't be done.
+         * @type {Error}
+         */
+        this.error = undefined;
 
         /**
          * Instructs server to delegate processing of request to specific implementation of response handler.
