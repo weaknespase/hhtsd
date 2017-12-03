@@ -221,7 +221,7 @@ class HookExecutor {
                         context._nextHook = i + 1;    
                         context.callback = (value) => {
                             context._lastResult = value;
-                            this.call(catMask, cb, context, ...args);
+                            this.call(catMask, cb, context, args);
                         }
                         if (this._safe) {
                             try {

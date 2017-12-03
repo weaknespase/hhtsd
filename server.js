@@ -332,7 +332,7 @@ class ServerInstance {
                             }
                         }
                     }
-                    if (responseProto.data) {
+                    if (responseProto.data || responseProto.data == null) {
                         if (typeof responseProto.entityTag == "string") {
                             response.setHeader("ETag", responseProto.entityTag);
                             if (typeof responseProto.maxAge == "number") {
@@ -365,12 +365,14 @@ class ServerInstance {
                                 response.setHeader("Content-Length", responseProto.dataLength);    
                             responseProto.data.pipe(response);
                         } else {
-                            console.log("Hook " + target + " field 'data' contains response data in invalid format.");
-                            responseProto.removeHeader("Content-Type");
-                            responseProto.removeHeader("ETag");
-                            responseProto.removeHeader("Cache-Control");
+                            //Using null is permitted to notify that standard error page is welcome
+                            if (responseProto.data != null)
+                                console.log("Hook " + target + " field 'data' contains response data in invalid format.");
+                            response.removeHeader("Content-Type");
+                            response.removeHeader("ETag");
+                            response.removeHeader("Cache-Control");
                             cacheable = false;
-                            response.end();
+                            errors.sendSimpleResponse(response, responseProto.status);
                         }
 
                         if (cacheable) {
@@ -385,6 +387,7 @@ class ServerInstance {
                 } else {
                     //Illegal response status code
                     console.error("Hook " + target + " responded with illegal HTTP status code (" + responseProto.status + ")");
+                    errors.sendSimpleResponse(response, 500);
                 }
             } else if (typeof responseProto.manual == "string") {
                 //Manual request processing
