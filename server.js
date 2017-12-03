@@ -214,7 +214,7 @@ class ServerInstance {
                 server.listen(this._config.securePorts[i], this._config.addrs[0]);
                 server.on("listening", function(addr, port) {
                     console.log("Started listeneing for HTTPS connections on " + addr + ":" + port);
-                }.bind(null, this._config.addrs[0], this._config.ports[i]));
+                }.bind(null, this._config.addrs[0], this._config.securePorts[i]));
                 this._secureServer.push(server);
             }
             this._tls = true;
@@ -483,6 +483,15 @@ class ServerInstance {
         //Parse URI
         var host = request.headers["host"];
         request.__sts = process.hrtime();
+
+        //Error handling of response
+        response.on("error", function(err) {
+            console.error(
+                "Error occurred while serving request for " + host + ":" + request.url + "\n" +
+                "Client: " + JSON.stringify(request.socket.address()) + "\n" +
+                "Cause: " + err.__proto__.name + ": " + err.message
+            );
+        })
 
         //Upgrade insecure requests (if TLS is available)
         if (this._tls) {
