@@ -1,7 +1,7 @@
 # lib-hook-async
 <div style="position:relative;top:-1.5em;left:1em">A universal hook library for in-app integration, for nodejs</div>
 
-This library provides easy to use extensible endpoints (hooks) for integration in the application. Each endpoint ultimately contains a list of functions and can be called for result or used as event listeners target.
+This library provides easy to use extensible endpoints (hooks) for integration in the application. Each endpoint ultimately contains a list of functions and can be called for result or used as event listener target.
 
 ## Basic features
 * Automatic hook reloading without application restart
@@ -26,7 +26,7 @@ module.exports.hA_callMeForResult = function(){
 }
 
 module.exports.hE_onSomethingHappens = function(eventDescription){
-    //Event-listener style functions doesn't return value.
+    //Event-listener style functions don't return value.
     console.log(eventDescription + " happened.");
 }
 ```
@@ -86,23 +86,23 @@ Special type reserved for functions that doesn't return any value. They behave a
 ### Priority
 Each function can have an additional numeric field `priority` that determines its execution order in the chain. Functions with **lower** priority will be executed before.
 
-If function doesn't have this field, or it is set to non-numeric value, it assigned module-wide priority, which specified using `module.exports.priority` property, or default priority 0.
+If function doesn't have this field, or it is set to non-numeric value, it assigned module-wide priority, which specified using `module.exports.priority` property with 0 begin default value. Execution order of functions that have same priority undefined.
 
 ### Category
-Each function also have a category mask. If no categories specified in the function name, it is assumed to be part of default category (included in all categories), otherwise it is part of specified categories only.
+Each function also have a category mask. If no categories specified in the function name, it is assumed to be part of default category (included in all categories), otherwise it takes part in specified categories only.
 
-So `callHook` with any category set but default includes all functions within default category, while `callHookStrict` will exclude them all. 
+Default category is special - `callHook` with any category set but default includes all functions within default category, while `callHookStrict` will exclude them all. 
 
 `callHook` with default category set will include all functions in chain, and `callHookStrict` will include only functions from default category.
 
 ## Class Options
 * `watch` &lt;boolean&gt; — reload all related hooks when hook definition files change, default true
-* `recursive` &lt;boolean&gt; — watch for hook file changes in subfolders also,default false
+* `recursive` &lt;boolean&gt; — watch for hook file changes in subfolders also, default false
 
 ## Class Context
 Accessible using `this` from inside and hook function.
 * `_lastResult` &lt;any&gt; — return value of previous hook function, `undefined` by default
-* `callback` &lt;function(returnValue)&gt; — callback function that must be called from asynchronous hook function to call next function in hook chain
+* `callback` &lt;function(returnValue)&gt; — callback function that must be called from asynchronous hook to call next function in chain
 
 ## Class HookLoader
 
@@ -110,9 +110,9 @@ Accessible using `this` from inside and hook function.
 Used as flag in `catMask` bitfield to include or exclude hook functions using categories. There are 26 categories, from A to Z.
 
 ### context &lt;Object&gt;
-Hook environment accessible using `this` keyword inside of hook function can be extended by using this property. This object will become a prototype of hook function context of next calls.
+Hook environment accessible using `this` keyword inside of any hook function can be extended by using this property. This object will become a prototype of hook function context of next calls.
 
-Reserved names: `callback`, `_lastResult`, `_nextHook`, `_compareFunc`.
+Reserved property names that have special meaning and won't be accessible: `callback`, `_lastResult`, `_nextHook`, `_compareFunc`.
 
 ### callHook([catMask,] hookName, callback, ...hookArgs)
 Asynchronously calls a hook for result.
@@ -151,7 +151,7 @@ Returns `HookLoader` class instance that could be used to call hooks.
 ## Built-in hooks
 
 ### onHookModuleChanged(path)
-Built-in hook, run in event-listener mode whenever a file with hooks were loaded or reloaded due to change.
+Built-in hook, run in event-listener mode whenever a file with hooks was loaded or reloaded due to change.
 * `path` &lt;string&gt; — path to the file that was loaded
 
 # Planned features
