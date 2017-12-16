@@ -1,24 +1,22 @@
-/**
- * Hook-based HTTP Server Daemon.
+/*
+ * Copyright (c) 2017, weaknespase
  *
- * Provides simplistic server-side fastCGI infrastructure, extensible using dynamic page generation modules.
+ * Permission to use, copy, modify, and/or distribute this software for any
+ * purpose with or without fee is hereby granted, provided that the above
+ * copyright notice and this permission notice appear in all copies.
+ * 
+ * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH
+ * REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY
+ * AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT,
+ * INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM
+ * LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE
+ * OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
+ * PERFORMANCE OF THIS SOFTWARE.
  */
 
- /*
-    Arch:
-
-    1. Feture-compatible with previous iteration of the server
-    2. HTTP and HTTPS support required
-    3. Automatic request handlers:
-        1. Content generation
-        2. Caching support
-        3. HTTP/2 queuing support
-    4. Manual request handlers:
-        1. Server Sent Events support must be possible
-    5. Infrastructure:
-        1. Certificate-based auth
-        2. Built-in session support
-        3. Configurable using external file
+/*
+ * Hook-based HTTP Server Daemon.
+ * Provides simple fastCGI server infrastructure with built-in caching.
  */
 
 var https = require("https");
@@ -101,8 +99,8 @@ class ServerConfig {
         /** 
          * Describes policy used for plaintext (HTTP) connections. Ignored if HTTPS can't be used.
          * "none" - do nothing
-         * "upgrade" - send Upgrade header but allow plaintext connections
-         * "reject" - send Upgrade header and reject plaintext connections
+         * "upgrade" - send Upgrade header but allow plaintext connections (Upgrade-Insecure-Requests method)
+         * "reject" - send Upgrade header and reject plaintext connections (Upgrade-Insecure-Requests method)
          * @type {"none"|"reject"|"upgrade"}
          */
         this.plaintextPolicy = "none";
@@ -391,8 +389,12 @@ class ServerInstance {
                 }
             } else if (typeof responseProto.manual == "string") {
                 //Manual request processing
-                console.error("Hook " + target + " requested manual mode, which is not implemented");
-                errors.sendSimpleResponse(response, 500);
+                if (responseProto.manual.length > 0 && this._iface.checkTarget(responseProto.manual)) {
+                    this._iface.runHook(responseProto.manual, request, response, responseProto);
+                } else {
+                    console.error("Hook " + target + " requested manual mode, delgating to the non-existing target [" + responseProto.manual + "].");
+                    errors.sendSimpleResponse(response, 502);
+                }
             }
         } else if (error instanceof Error) {
             console.error("Hook " + target + " encountered an error while running", error);
@@ -476,24 +478,6 @@ class ServerInstance {
         }
     };
     __requestHandler(request, response) {
-        /*
-        Flow:
-        *1. Parse URI for PATH and QUERY
-        *2. Grab DOMAIN from host field
-        *3. Search for registered DOMAIN in the config.sites
-        4. Get category association with domain
-        *5. Fetch POST data for request if any
-        *6. Parse QUERY into params object
-        7. Check hooks for URI
-        8. Call hook for URI or generic hook (again if exists)
-        9. Grab execution results
-        */
-
-        //Includes cache subsystem (in later stages)
-        //If request came for exact same uri, and is GET/HEAD, we allowed to use cache
-        //On the other hand we're waiting for request to be processed fully, resolved up to the target
-
-        //Parse URI
         var host = request.headers["host"];
         request.__sts = process.hrtime();
 
@@ -539,7 +523,7 @@ class ServerInstance {
                     break;
                 }
                 case "OPTIONS": {
-                    //FIXME Use this method to upgrade to TLS connection
+                    //FIXME Use this method to upgrade to TLS connection (old rfc method)
                     break;
                 }    
                 default: {
@@ -550,7 +534,7 @@ class ServerInstance {
                 }
             }
         } else {
-            //Site configuration wasn't found, break the connection
+            //Site configuration wasn't found, break connection
             request.resume();
             response.socket.destroy();
         }
@@ -640,49 +624,7 @@ class ResponseCache {
     };
 }
 
-function hAW_$something() {
-    
-}
-
 module.exports.Server = ServerInstance;
 module.exports.ServerConfig = ServerConfig;
 module.exports.ServerSiteConfig = HostedSiteConfig;
 module.exports.ServerSecureOpts = ServerSecureOpts;
-
-/**
- *
- * Hook interface:
- *  hook functions named using following schema:
- *   h[AS][A-Z]+_$<uri-without-leading-slash>
- *  handlers for uri that contains unicode chars can be specified using bracket notation
- *   module.exports["hS_$some/file/on/server"]
- * There are two hook types for handlers:
- *  Named endpoint hook and default endpoint hook.
- *  Named endpoint hook services all requests that specify matching uri, while default endpoint hook services all requests that doesn't have dedicated handler
- *  Query params (from POST or GET), method name and post data (optional) passed using hook argument (not context)
- *
- *  Hooks can work in 2 modes:
- *   Full-auto and manual
- *  In automatic mode they required to produce a stream with static contents, readable at server side.
- *  In manual mode they will be passes response handle for full response control.
- *  Latter useful for special communication modes, like SSE or websocket (?)
- *  
- */
-
-/**
- * Performance metrics as of 0.4.11
- * Core i7 2600K @ 3.4Ghz
- * 1. GET with query and hook call with one synchronous function:   200-240 us
- * 2. GET with query and response from static cache:                160-190 us
- * Thoughput atm: 1500 static requests per second per Ghz, pretty impressive, NodeJS.
- */
-
-/**
- * To do:
- * 1. Handling of conditional requests for ETag and Date using cache.
- * 2. HTTPS support with HTTP->HTTPS automatic upgrade.
- * 3. Compression support with "Accept-Encoding" (explicit with request prototype)
- * 4. Implicit compression of response data in static cache.
- * 5. Disable cache for POST request.
- * 6. Test for leaks.
- */

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2017, nekavally
+ * Copyright (c) 2017, weaknespase
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -15,10 +15,9 @@
  */
 
 /*
-    Basic extensible enpoints with hot code reloading support.
+    <Also see readme.md>
 
-    Bases on concept of hooks - small functions implementing application logic, invoked at
-    specific events in application lifetime.
+    Basic extensible enpoints with hot code reloading support.
     
     (Re)Loading performed automatically from *.hook.js files placed in 'hooks' subdirectory.
     Every file must be a valid Node.JS module, which exports zero or more functions with
@@ -38,7 +37,7 @@ Defining hooks in files
     has value 0. Hook functions defined in module with *smaller* priority number will be executed
     first, order of execution of functions defined in modules with same priority isn't defined.
     
-Hooks calling convention
+Function calling convention
 
     All exported functions, following naming scheme above, are considered to be part of single hook.
     There is no restriction on how hook function should be called - functions with different calling
@@ -77,19 +76,20 @@ Built-in hooks
 
 Hooks interface
 
-    Upon executing hook function, it will be bound to context object:
+    Upon execution, function's this object will be bound to context object:
     
         {
             lastResult: any
             callback: function(result:any)
+            <external fields>
         }
 
     Field 'lastResult' always contains execution result of previous hook function, and 'callback'
     points to function which must be called at some point with argument set to execution result, if function
     designed to return result asynchronously.
 
-    Using context object to pass this information removes necessity of framework-defined arguments, making
-    declarations for hook functions more straightforward and clean.
+    Using context object to pass this information removes necessity of extra arguments, making
+    declarations for hook functions more straightforward and easy to understand.
 */
 
 const HOOK_FILE_NAME_REGEX = /.+?\.hook\.js/;

@@ -148,11 +148,8 @@ behaviour
 
 Returns `HookLoader` class instance that could be used to call hooks.
 
-## Built-in hooks
+## System-defined hooks
 
 ### onHookModuleChanged(path)
 Built-in hook, run in event-listener mode whenever a file with hooks was loaded or reloaded due to change.
 * `path` &lt;string&gt; — path to the file that was loaded
-
-# Planned features
-* Context switch support between calls.
