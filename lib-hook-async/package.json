@@ -1,0 +1,14 @@
+{
+  "name": "lib-hook-async",
+  "version": "0.2.0",
+  "description": "Helper library to write programs extensible at runtime.",
+  "main": "./lib-hook-async.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "hook", "library"
+  ],
+  "author": "weaknespase",
+  "license": "LGPL-3.0"
+}

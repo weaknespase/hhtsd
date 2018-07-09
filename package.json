@@ -1,0 +1,16 @@
+{
+  "name": "hhtsd",
+  "version": "0.5.21",
+  "description": "Simple HTTP/HTTPS server with fastCGI interface and caching support.",
+  "main": "server.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "http",
+    "https",
+    "web-server"
+  ],
+  "author": "weaknespase",
+  "license": "GPL-3.0"
+}
